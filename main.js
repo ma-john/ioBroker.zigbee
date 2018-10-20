@@ -23,7 +23,9 @@ const SerialPort = require('serialport');
 
 let zbControl;
 
-
+function cutZeros(text) {
+    return typeof text === 'string' ? text.replace(/\u0000/g, '') : text;
+}
 function processMessages(ignore) {
     adapter.getMessage(function (err, obj) {
         if (obj) {
@@ -69,16 +71,16 @@ adapter.on('objectChange', function (id, obj) {
 
 
 // is called if a subscribed state changes
-adapter.on('stateChange', function (id, state) {
+adapter.on('stateChange', (id, state) => {
     // you can use the ack flag to detect if it is status (true) or command (false)
     if (state && !state.ack) {
         adapter.log.debug('User stateChange ' + id + ' ' + JSON.stringify(state));
         const devId = adapter.namespace + '.' + id.split('.')[2]; // iobroker device id
         const deviceId = '0x' + id.split('.')[2]; // zigbee device id
         const stateKey = id.split('.')[3];
-        adapter.getObject(devId, function (err, obj) {
+        adapter.getObject(devId, (err, obj) => {
             if (obj) {
-                const modelId = obj.common.type;
+                const modelId = cutZeros(obj.common.type);
                 if (!modelId) return;
                 publishFromState(deviceId, modelId, stateKey, state.val);
             }
@@ -263,18 +265,19 @@ function deleteDevice(from, command, msg, callback) {
     }
 }
 
-function updateDev(dev_id, dev_name, model, callback) {
+function updateDev(dev_id, dev_name, modelId, callback) {
     const id = '' + dev_id;
-    const modelDesc = statesMapping.findModel(model);
+    modelId = cutZeros(modelId);
+    const modelDesc = statesMapping.findModel(modelId);
     const icon = (modelDesc && modelDesc.icon) ? modelDesc.icon : 'img/unknown.png';
     adapter.setObjectNotExists(id, {
         type: 'device',
         // actually this is an error, so device.common has no attribute type. It must be in native part
-        common: {name: dev_name, type: model, icon: icon},
+        common: {name: dev_name, type: modelId, icon: icon},
         native: {id: dev_id}
     }, () => {
         // update type and icon
-        adapter.extendObject(id, {common: {type: model, icon: icon}}, callback);
+        adapter.extendObject(id, {common: {type: modelId, icon: icon}}, callback);
     });
 }
 
@@ -415,10 +418,11 @@ function getDevices(from, command, callback) {
 function newDevice(id, msg) {
     let dev = zbControl.getDevice(id);
     if (dev) {
-        adapter.log.info('new dev ' + dev.ieeeAddr + ' ' + dev.nwkAddr + ' ' + dev.modelId);
-        logToPairing('New device joined ' + dev.ieeeAddr + ' model ' + dev.modelId, true);
-        updateDev(dev.ieeeAddr.substr(2), dev.modelId, dev.modelId, () =>
-            syncDevStates(dev.ieeeAddr.substr(2), dev.modelId));
+        const modelId = cutZeros(dev.modelId);
+        adapter.log.info('new dev ' + dev.ieeeAddr + ' ' + dev.nwkAddr + ' ' + modelId);
+        logToPairing('New device joined ' + dev.ieeeAddr + ' model ' + modelId, true);
+        updateDev(dev.ieeeAddr.substr(2), dev.modelId, modelId, () =>
+            syncDevStates(dev.ieeeAddr.substr(2), modelId));
 
     }
 }
@@ -444,10 +448,9 @@ function onReady() {
     zbControl.getDevices().forEach(device => adapter.log.debug(safeJsonStringify(device)));
     activeDevices.forEach(device => {
         adapter.log.info(getDeviceStartupLogMessage(device));
-
+        const modelId = cutZeros(device.modelId);
         // update dev and states
-        updateDev(device.ieeeAddr.substr(2), device.modelId, device.modelId, () =>
-            syncDevStates(device.ieeeAddr.substr(2), device.modelId));
+        updateDev(device.ieeeAddr.substr(2), modelId, modelId, () => syncDevStates(device.ieeeAddr.substr(2), modelId));
 
         configureDevice(device);
     });
@@ -456,7 +459,7 @@ function onReady() {
 function getDeviceStartupLogMessage(device) {
     let type = 'unknown';
     let friendlyDevice = {model: 'unkown', description: 'unknown'};
-    const mappedModel = deviceMapping.findByZigbeeModel(device.modelId);
+    const mappedModel = deviceMapping.findByZigbeeModel(cutZeros(device.modelId));
     if (mappedModel) {
         friendlyDevice = mappedModel;
     }
@@ -465,22 +468,22 @@ function getDeviceStartupLogMessage(device) {
         type = device.type;
     }
 
-    return `(${device.ieeeAddr}): ${friendlyDevice.model} - ` +
-        `${friendlyDevice.vendor} ${friendlyDevice.description} (${type})`;
+    return `(${device.ieeeAddr}): ${friendlyDevice.model} - ${friendlyDevice.vendor} ${friendlyDevice.description} (${type})`;
 }
 
 function configureDevice(device) {
     // Configure reporting for this device.
     const ieeeAddr = device.ieeeAddr;
-    if (ieeeAddr && device.modelId) {
-        const mappedModel = deviceMapping.findByZigbeeModel(device.modelId);
+    const modelId = cutZeros(device.modelId);
+    if (ieeeAddr && modelId) {
+        const mappedModel = deviceMapping.findByZigbeeModel(modelId);
 
         if (mappedModel && mappedModel.configure) {
             mappedModel.configure(ieeeAddr, zbControl.shepherd, zbControl.getCoordinator(), (ok, msg) => {
                 if (ok) {
-                    adapter.log.info(`Succesfully configured ${ieeeAddr}`);
+                    adapter.log.info(`Successfully configured ${ieeeAddr}`);
                 } else {
-                    adapter.log.error(`Failed to configure ${ieeeAddr} ` + device.modelId);
+                    adapter.log.error(`Failed to configure ${ieeeAddr} ${modelId}`);
                 }
             });
         }
@@ -526,6 +529,7 @@ function logToPairing(message, ignoreJoin) {
 }
 
 function publishFromState(deviceId, modelId, stateKey, value) {
+    modelId = cutZeros(modelId);
     const mappedModel = deviceMapping.findByZigbeeModel(modelId);
     if (!mappedModel) {
         adapter.log.error('Unknown device model ' + modelId);
@@ -537,37 +541,31 @@ function publishFromState(deviceId, modelId, stateKey, value) {
         return;
     }
     // find state for set
-    const stateDesc = stateModel.states.find((statedesc) => stateKey === statedesc.id);
+    const stateDesc = stateModel.states.find(sd => stateKey === sd.id);
     if (!stateDesc) {
-        adapter.log.error(
-            `No state available for '${mappedModel.model}' with key '${stateKey}'`
-        );
+        adapter.log.error(`No state available for '${mappedModel.model}' with key '${stateKey}'`);
         return;
     }
     let stateList = [{stateDesc: stateDesc, value: value, index: 0}];
 
     if (stateModel.linkedStates) {
-        stateModel.linkedStates.forEach((linkedFunct) => {
+        stateModel.linkedStates.forEach(linkedFunct => {
             const res = linkedFunct(stateDesc, value);
             if (res) {
                 stateList = stateList.concat(res);
             }
         });
         // sort by index
-        stateList.sort((a, b) => {
-            return a.index - b.index;
-        });
+        stateList.sort((a, b) => a.index - b.index);
     }
 
-    stateList.forEach((changedState) => {
+    stateList.forEach(changedState => {
         const stateDesc = changedState.stateDesc;
         if (stateDesc.isOption) return;
         const value = changedState.value;
         const converter = mappedModel.toZigbee.find((c) => c.key === stateDesc.prop || c.key === stateDesc.setattr || c.key === stateDesc.id);
         if (!converter) {
-            adapter.log.error(
-                `No converter available for '${mappedModel.model}' with key '${stateKey}'`
-            );
+            adapter.log.error(`No converter available for '${mappedModel.model}' with key '${stateKey}'`);
             return;
         }
         const preparedValue = (stateDesc.setter) ? stateDesc.setter(value) : value;
@@ -583,10 +581,11 @@ function publishFromState(deviceId, modelId, stateKey, value) {
     });
 }
 
-function publishToState(devId, modelID, model, payload) {
-    const stateModel = statesMapping.findModel(modelID);
+function publishToState(devId, modelId, model, payload) {
+    modelId = cutZeros(modelId);
+    const stateModel = statesMapping.findModel(modelId);
     if (!stateModel) {
-        adapter.log.debug('Device ' + devId + ' "' + modelID + '" not described in statesMapping.');
+        adapter.log.debug('Device ' + devId + ' "' + modelId + '" not described in statesMapping.');
         return;
     }
     // find states for payload
@@ -594,45 +593,47 @@ function publishToState(devId, modelID, model, payload) {
         stateModel.states.filter((statedesc) => payload.hasOwnProperty(statedesc.prop || statedesc.id))
     );
     for (const stateInd in states) {
-        const statedesc = states[stateInd];
+        if (!states.hasOwnProperty(stateInd)) continue;
+        const stateDesc = states[stateInd];
         let value;
-        if (statedesc.getter) {
-            value = statedesc.getter(payload);
+        if (stateDesc.getter) {
+            value = stateDesc.getter(payload);
         } else {
-            value = payload[statedesc.prop || statedesc.id]
+            value = payload[stateDesc.prop || stateDesc.id]
         }
         // checking value
         if (value === undefined) continue;
 
         const common = {
-            name: statedesc.name,
-            type: statedesc.type,
-            unit: statedesc.unit,
-            read: statedesc.read,
-            write: statedesc.write,
-            icon: statedesc.icon,
-            role: statedesc.role,
-            min: statedesc.min,
-            max: statedesc.max,
+            name: stateDesc.name,
+            type: stateDesc.type,
+            unit: stateDesc.unit,
+            read: stateDesc.read,
+            write: stateDesc.write,
+            icon: stateDesc.icon,
+            role: stateDesc.role,
+            min: stateDesc.min,
+            max: stateDesc.max,
         };
         // if need return value to back after timeout
-        if (statedesc.isEvent) {
-            updateStateWithTimeout(devId, statedesc.id, value, common, 300, !value);
+        if (stateDesc.isEvent) {
+            updateStateWithTimeout(devId, stateDesc.id, value, common, 300, !value);
         } else {
-            if (statedesc.prepublish) {
-                collectOptions(devId, modelID, (options) => {
-                    statedesc.prepublish(devId, value, (newvalue) => {
-                        updateState(devId, statedesc.id, newvalue, common);
+            if (stateDesc.prepublish) {
+                collectOptions(devId, modelId, (options) => {
+                    stateDesc.prepublish(devId, value, (newvalue) => {
+                        updateState(devId, stateDesc.id, newvalue, common);
                     }, options);
                 });
             } else {
-                updateState(devId, statedesc.id, value, common);
+                updateState(devId, stateDesc.id, value, common);
             }
         }
     }
 }
 
 function syncDevStates(devId, modelId) {
+    modelId = cutZeros(modelId);
     // devId - iobroker device id
     const stateModel = statesMapping.findModel(modelId);
     if (!stateModel) {
@@ -659,6 +660,7 @@ function syncDevStates(devId, modelId) {
 }
 
 function collectOptions(devId, modelId, callback) {
+    modelId = cutZeros(modelId);
     // find model states for options and get it values
     const mappedModel = deviceMapping.findByZigbeeModel(modelId);
     if (!mappedModel) {
@@ -672,19 +674,19 @@ function collectOptions(devId, modelId, callback) {
         callback();
         return;
     }
-    const states = stateModel.states.filter((statedesc) => statedesc.isOption);
+    const states = stateModel.states.filter(stateDesc => stateDesc.isOption);
     if (!states) {
         callback();
         return;
     }
     let result = {};
     let cnt = 0, len = states.length;
-    states.forEach((statedesc) => {
-        const id = adapter.namespace + '.' + devId + '.' + statedesc.id;
+    states.forEach(stateDesc => {
+        const id = adapter.namespace + '.' + devId + '.' + stateDesc.id;
         adapter.getState(id, (err, state) => {
             cnt = cnt + 1;
             if (!err && state) {
-                result[statedesc.id] = state.val;
+                result[stateDesc.id] = state.val;
             }
             if (cnt === len) {
                 callback(result);
@@ -703,31 +705,29 @@ function onDevEvent(type, devId, message, data) {
 
         default:
             adapter.log.debug('Device ' + devId + ' emit event ' + type + ' with data:' + safeJsonStringify(message.data));
-            // Map Zigbee modelID to vendor modelID.
-            const modelID = data.modelId;
-            const mappedModel = deviceMapping.findByZigbeeModel(modelID);
+            // Map Zigbee modelId to vendor modelId.
+            const modelId = cutZeros(data.modelId);
+            const mappedModel = deviceMapping.findByZigbeeModel(modelId);
             // Find a conveter for this message.
             const cid = data.cid;
             if (!mappedModel) {
-                adapter.log.error('Unknown device model ' + modelID + ' emit event ' + type + ' with data:' + safeJsonStringify(message.data));
+                adapter.log.error('Unknown device model ' + modelId + ' emit event ' + type + ' with data:' + safeJsonStringify(message.data));
                 return;
             }
             const converters = mappedModel.fromZigbee.filter((c) => c.cid === cid && c.type === type);
             if (!converters.length) {
-                adapter.log.error(
-                    `No converter available for '${mappedModel.model}' with cid '${cid}' and type '${type}'`
-                );
+                adapter.log.error(`No converter available for '${mappedModel.model}' with cid '${cid}' and type '${type}'`);
                 return;
             }
-            converters.forEach((converter) => {
-                const publish = (payload) => {
+            converters.forEach(converter => {
+                const publish = payload => {
                     // Don't cache messages with click and action.
-                    const cache = !payload.hasOwnProperty('click') && !payload.hasOwnProperty('action');
+                    // const cache = !payload.hasOwnProperty('click') && !payload.hasOwnProperty('action');
                     adapter.log.debug('Publish ' + safeJsonStringify(payload));
-                    publishToState(devId.substr(2), modelID, mappedModel, payload);
+                    publishToState(devId.substr(2), modelId, mappedModel, payload);
                 };
 
-                collectOptions(devId.substr(2), modelID, (options) => {
+                collectOptions(devId.substr(2), modelId, (options) => {
                     const payload = converter.convert(mappedModel, message, publish, options);
                     if (payload) {
                         // Add device linkquality.
@@ -787,8 +787,7 @@ function main() {
     }
 
     // start the server
-    zbControl.start(err => {
-             err && adapter.setState('info.connection', false));
+    zbControl.start(err => err && adapter.setState('info.connection', false));
 
     // in this template all states changes inside the adapters namespace are subscribed
     adapter.subscribeStates('*');

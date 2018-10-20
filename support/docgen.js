@@ -4,7 +4,7 @@
  */
 
 const deviceMapping = require('../lib/devstates').devices;
-const deviceMappingConverters = require('zigbee-shepherd-converters').devices;
+// const deviceMappingConverters = require('zigbee-shepherd-converters').devices;
 const findByZigbeeModel = require('zigbee-shepherd-converters').findByZigbeeModel;
 const fs = require('fs');
 const outputdir = process.argv[2];
@@ -20,8 +20,8 @@ const logDevices = (devices) => {
     let result = '';
 
     devices = new Map(devices.map((d) => [d.models, d]));
-    devices.forEach((device) => {
-        var pathImg  = device.icon.replace(new RegExp("img/", "g"), '').replace(new RegExp(".png", "g"), '');      
+    devices.forEach(device => {
+        const pathImg  = device.icon.replace(new RegExp('img/', 'g'), '').replace(new RegExp('.png', 'g'), '');
         device.models.forEach((modelId) => {
             const mappedModel = findByZigbeeModel(modelId);
             const desc = mappedModel ? `${mappedModel.description} (${mappedModel.supports})` : `${modelId}`;
@@ -31,16 +31,16 @@ const logDevices = (devices) => {
     });
 
     return result;
-}
+};
 
 const vendors = Array.from(new Set(deviceMapping.map((d) => d.vendor)));
 vendors.sort();
 text += '|  Model | Description | Picture |\n';
 text += '| ------------- | ------------- | -------------------------- |\n';
-vendors.forEach((vendor) => {
+vendors.forEach(vendor => {
     text += `|  | **${vendor}**  |   |\n`;   
-    text += logDevices(deviceMapping.filter((d) => d.vendor === vendor));
-})
+    text += logDevices(deviceMapping.filter(d => d.vendor === vendor));
+});
 
 fs.writeFileSync(outputdir + '/' + file, text);
 
